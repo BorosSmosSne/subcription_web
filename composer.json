@@ -1,0 +1,8 @@
+{
+    "name": "acme/membership-app",
+    "description": "Membership web app with recurring Stripe subscription billing",
+    "require": {
+        "php": ">=8.1",
+        "stripe/stripe-php": "^16.0"
+    }
+}
