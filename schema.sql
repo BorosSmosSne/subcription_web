@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
     stripe_subscription_id  VARCHAR(64)  DEFAULT NULL,
     membership_plan         ENUM('free','silver','gold') NOT NULL DEFAULT 'free',
     membership_status       ENUM('inactive','active','past_due','canceled') NOT NULL DEFAULT 'inactive',
+    pending_plan            ENUM('silver','gold') DEFAULT NULL,
+    current_period_end      DATETIME DEFAULT NULL,
     created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uq_users_email (email),

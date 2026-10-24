@@ -53,6 +53,37 @@ $pending  = !$isActive && $checkedOutUserId === (int) $user['id'];
 
 $tierLabels = ['free' => 'Free', 'silver' => 'Silver', 'gold' => 'Gold VIP'];
 $tierLabel  = $tierLabels[$user['membership_plan']] ?? 'Free';
+
+$flash = [
+    'changed'   => (string) ($_GET['changed'] ?? ''),
+    'scheduled' => (string) ($_GET['scheduled'] ?? ''),
+    'kept'      => (string) ($_GET['kept'] ?? ''),
+    'error'     => (string) ($_GET['error'] ?? ''),
+];
+
+// Self-heal: store the renewal date the first time we see an active subscription without one.
+if ($isActive && !empty($user['stripe_subscription_id']) && empty($user['current_period_end'])) {
+    try {
+        Stripe::setApiKey(STRIPE_SECRET_KEY);
+        $liveSub = \Stripe\Subscription::retrieve($user['stripe_subscription_id']);
+        if ($ts = subscription_period_end($liveSub)) {
+            $user['current_period_end'] = gmdate('Y-m-d H:i:s', $ts);
+            $upd = db()->prepare('UPDATE users SET current_period_end = ? WHERE id = ?');
+            $upd->execute([$user['current_period_end'], $user['id']]);
+        }
+    } catch (\Throwable $e) {
+        error_log('Could not load renewal date: ' . $e->getMessage());
+    }
+}
+
+// Exact billing figures shown in the confirmation dialogs
+$silverCents = PLANS['silver']['amount'];
+$goldCents   = PLANS['gold']['amount'];
+$diffCents   = $goldCents - $silverCents;
+$periodEndTs = !empty($user['current_period_end']) ? strtotime($user['current_period_end'] . ' UTC') : null;
+$renewDate   = $periodEndTs ? date('M j, Y', $periodEndTs) : 'your next renewal date';
+$pendingPlan = $user['pending_plan'] ?? null;
+$actionToken = new_action_token();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -141,6 +172,135 @@ $tierLabel  = $tierLabels[$user['membership_plan']] ?? 'Free';
         </div>
     </section>
 
+    <?php if ($flash['changed'] === 'gold'): ?>
+        <div class="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            ✅ Upgrade complete. Gold VIP is unlocked and <?= e(money($diffCents)) ?> was charged today.
+            Your next renewal is <?= e(money($goldCents)) ?>.
+        </div>
+    <?php elseif ($flash['scheduled'] === 'silver'): ?>
+        <div class="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            ✅ Downgrade scheduled. You keep Gold VIP until <strong><?= e($renewDate) ?></strong>, then switch to Silver.
+        </div>
+    <?php elseif ($flash['kept'] === 'gold'): ?>
+        <div class="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            ✅ Your scheduled downgrade was canceled. You will stay on Gold VIP.
+        </div>
+    <?php endif; ?>
+    <?php if ($flash['error'] !== ''): ?>
+        <div class="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><?= e($flash['error']) ?></div>
+    <?php endif; ?>
+
+    <section class="mt-6 rounded-2xl border border-emerald-100 bg-white p-6 shadow-sm">
+        <h2 class="text-lg font-bold">Change plan</h2>
+
+        <?php if ($user['membership_plan'] === 'gold' && $pendingPlan === 'silver'): ?>
+
+            <p class="mt-2 text-sm text-emerald-700/80">
+                Your plan will switch to <strong>Silver</strong> on <strong><?= e($renewDate) ?></strong>
+                and renew at <?= e(money($silverCents)) ?> / month. Until then you keep all Gold benefits.
+            </p>
+            <form action="change-plan.php" method="POST" data-once class="mt-4">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action_token" value="<?= e($actionToken) ?>">
+                <input type="hidden" name="action" value="keep_gold">
+                <button type="submit" class="rounded-xl border border-emerald-600 px-5 py-3 text-sm font-semibold text-emerald-600 hover:bg-emerald-50">
+                    Keep Gold VIP (cancel downgrade)
+                </button>
+            </form>
+
+        <?php elseif ($user['membership_plan'] === 'silver'): ?>
+
+            <p class="mt-2 text-sm text-emerald-700/80">
+                Upgrade to Gold VIP for <?= e(money($diffCents)) ?> today. Your billing date stays the same.
+            </p>
+            <button type="button" data-open-dialog="upgradeDialog"
+                    class="mt-4 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700">
+                Upgrade to Gold VIP
+            </button>
+
+            <dialog id="upgradeDialog" class="w-full max-w-md rounded-2xl border border-emerald-100 p-0 text-emerald-800 shadow-xl backdrop:bg-black/40">
+                <form action="change-plan.php" method="POST" data-once class="p-6">
+                    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="action_token" value="<?= e($actionToken) ?>">
+                    <input type="hidden" name="action" value="upgrade">
+
+                    <h3 class="text-xl font-extrabold">Confirm upgrade to Gold VIP</h3>
+                    <dl class="mt-4 divide-y divide-emerald-100 rounded-xl border border-emerald-100 text-sm">
+                        <div class="flex justify-between px-4 py-3">
+                            <dt>Gold VIP <?= e(money($goldCents)) ?> − Silver <?= e(money($silverCents)) ?></dt>
+                            <dd class="font-semibold"><?= e(money($diffCents)) ?></dd>
+                        </div>
+                        <div class="flex justify-between bg-emerald-50 px-4 py-3 font-bold">
+                            <dt>Charged to your card today</dt>
+                            <dd><?= e(money($diffCents)) ?></dd>
+                        </div>
+                        <div class="flex justify-between px-4 py-3">
+                            <dt>Next renewal (<?= e($renewDate) ?>)</dt>
+                            <dd class="font-semibold"><?= e(money($goldCents)) ?> / month</dd>
+                        </div>
+                    </dl>
+                    <p class="mt-3 text-xs text-emerald-700/80">
+                        This is a flat price difference, regardless of how many days are left in your period.
+                        Gold benefits unlock as soon as the payment is confirmed. If the payment fails, nothing changes.
+                    </p>
+
+                    <div class="mt-5 flex justify-end gap-3">
+                        <button type="button" data-close-dialog class="rounded-xl border border-emerald-100 px-4 py-2 text-sm font-semibold hover:bg-emerald-50">Cancel</button>
+                        <button type="submit" class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                            Pay <?= e(money($diffCents)) ?> &amp; upgrade
+                        </button>
+                    </div>
+                </form>
+            </dialog>
+
+        <?php else: ?>
+
+            <p class="mt-2 text-sm text-emerald-700/80">
+                Downgrade to Silver at the end of your paid period. You keep Gold until <?= e($renewDate) ?>.
+            </p>
+            <button type="button" data-open-dialog="downgradeDialog"
+                    class="mt-4 rounded-xl border border-emerald-600 px-5 py-3 text-sm font-semibold text-emerald-600 hover:bg-emerald-50">
+                Downgrade to Silver
+            </button>
+
+            <dialog id="downgradeDialog" class="w-full max-w-md rounded-2xl border border-emerald-100 p-0 text-emerald-800 shadow-xl backdrop:bg-black/40">
+                <form action="change-plan.php" method="POST" data-once class="p-6">
+                    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="action_token" value="<?= e($actionToken) ?>">
+                    <input type="hidden" name="action" value="downgrade">
+
+                    <h3 class="text-xl font-extrabold">Confirm downgrade to Silver</h3>
+                    <dl class="mt-4 divide-y divide-emerald-100 rounded-xl border border-emerald-100 text-sm">
+                        <div class="flex justify-between px-4 py-3">
+                            <dt>Charged or refunded today</dt>
+                            <dd class="font-semibold">$0.00</dd>
+                        </div>
+                        <div class="flex justify-between px-4 py-3">
+                            <dt>Gold VIP benefits stay active until</dt>
+                            <dd class="font-semibold"><?= e($renewDate) ?></dd>
+                        </div>
+                        <div class="flex justify-between bg-emerald-50 px-4 py-3 font-bold">
+                            <dt>From <?= e($renewDate) ?></dt>
+                            <dd><?= e(money($silverCents)) ?> / month (Silver)</dd>
+                        </div>
+                    </dl>
+                    <p class="mt-3 text-xs text-emerald-700/80">
+                        <strong>No refund and no account credit</strong> is given for the unused part of your current Gold period.
+                        You can cancel this downgrade any time before <?= e($renewDate) ?>.
+                    </p>
+
+                    <div class="mt-5 flex justify-end gap-3">
+                        <button type="button" data-close-dialog class="rounded-xl border border-emerald-100 px-4 py-2 text-sm font-semibold hover:bg-emerald-50">Keep Gold</button>
+                        <button type="submit" class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                            Schedule downgrade
+                        </button>
+                    </div>
+                </form>
+            </dialog>
+
+        <?php endif; ?>
+    </section>
+
     <section class="mt-10">
         <h2 class="text-xl font-bold">Members-only content</h2>
         <div class="mt-4 grid gap-6 md:grid-cols-2">
@@ -170,5 +330,20 @@ $tierLabel  = $tierLabels[$user['membership_plan']] ?? 'Free';
 <?php endif; ?>
 
 </main>
+
+<script>
+document.querySelectorAll('[data-open-dialog]').forEach(function (b) {
+    b.addEventListener('click', function () { document.getElementById(b.dataset.openDialog).showModal(); });
+});
+document.querySelectorAll('[data-close-dialog]').forEach(function (b) {
+    b.addEventListener('click', function () { b.closest('dialog').close(); });
+});
+document.querySelectorAll('form[data-once]').forEach(function (f) {
+    f.addEventListener('submit', function () {
+        var btn = f.querySelector('button[type=submit]');
+        if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
+    });
+});
+</script>
 </body>
 </html>

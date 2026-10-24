@@ -91,11 +91,43 @@ try {
                 "UPDATE users
                     SET membership_status = 'canceled',
                         membership_plan = 'free',
+                        pending_plan = NULL,
+                        current_period_end = NULL,
                         stripe_subscription_id = NULL
                   WHERE stripe_subscription_id = ?
                      OR (stripe_customer_id = ? AND stripe_subscription_id IS NULL)"
             );
             $stmt->execute([$subscription->id, $subscription->customer]);
+            break;
+
+        // Subscription created / plan changed / renewed (incl. the scheduled downgrade firing)
+        case 'customer.subscription.created':
+        case 'customer.subscription.updated':
+            $sub    = $event->data->object;
+            $tier   = (string) ($sub->items->data[0]->price->metadata->tier
+                      ?? $sub->metadata->tier ?? '');
+            $end    = subscription_period_end($sub);
+            $endSql = $end ? gmdate('Y-m-d H:i:s', $end) : null;
+
+            if (in_array($tier, ['silver', 'gold'], true)
+                && in_array($sub->status, ['active', 'trialing'], true)) {
+                // Also clears pending_plan once the scheduled tier has actually taken effect.
+                $stmt = $pdo->prepare(
+                    "UPDATE users
+                        SET membership_plan = ?,
+                            membership_status = 'active',
+                            current_period_end = COALESCE(?, current_period_end),
+                            pending_plan = CASE WHEN pending_plan = ? THEN NULL ELSE pending_plan END
+                      WHERE stripe_subscription_id = ?"
+                );
+                $stmt->execute([$tier, $endSql, $tier, $sub->id]);
+            } elseif ($sub->status === 'past_due') {
+                $stmt = $pdo->prepare(
+                    "UPDATE users SET membership_status = 'past_due'
+                      WHERE stripe_subscription_id = ?"
+                );
+                $stmt->execute([$sub->id]);
+            }
             break;
 
         default:

@@ -54,10 +54,15 @@ $error = isset($_GET['error']) ? (string) $_GET['error'] : '';
         </div>
     <?php endif; ?>
 
-        <?php if (!$user): ?>
+    <?php if (!$user): ?>
         <div class="mx-auto mt-8 max-w-xl rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-center text-sm text-emerald-700">
             Please <a href="login.php?mode=register" class="font-semibold underline">create an account</a>
             or <a href="login.php" class="font-semibold underline">log in</a> before choosing a plan.
+        </div>
+    <?php elseif (in_array($user['membership_status'], ['active', 'past_due'], true)): ?>
+        <div class="mx-auto mt-8 max-w-xl rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-center text-sm text-emerald-700">
+            You already have a membership. To upgrade, downgrade or cancel, go to your
+            <a href="dashboard.php" class="font-semibold underline">dashboard</a>.
         </div>
     <?php endif; ?>
 
@@ -78,6 +83,50 @@ $error = isset($_GET['error']) ? (string) $_GET['error'] : '';
                 <p class="mt-1 text-xs text-emerald-600">Linked to your logged-in account.</p>
             </div>
         <?php endif; ?>
+
+        <div class="mt-10 grid gap-8 md:grid-cols-2">
+
+            <!-- Silver -->
+            <div class="flex flex-col rounded-2xl border border-emerald-100 bg-white p-8 shadow-sm">
+                <h2 class="text-xl font-bold text-emerald-800">Silver Tier</h2>
+                <p class="mt-1 text-sm text-emerald-700/70">Everything you need to get started.</p>
+                <p class="mt-6 text-4xl font-extrabold text-emerald-800">
+                    $10.00 <span class="text-base font-medium text-emerald-600">/ month</span>
+                </p>
+                <ul class="mt-6 flex-1 space-y-3 text-sm text-emerald-800">
+                    <li>✔ Access to member library</li>
+                    <li>✔ Monthly community newsletter</li>
+                    <li>✔ Standard email support</li>
+                </ul>
+                <button type="submit" name="tier" value="silver"
+                    class="mt-8 w-full rounded-xl border border-emerald-600 px-4 py-3 font-semibold text-emerald-600 transition hover:bg-emerald-50">
+                    Choose Silver
+                </button>
+            </div>
+
+            <!-- Gold -->
+            <div class="relative flex flex-col rounded-2xl border-2 border-emerald-600 bg-white p-8 shadow-lg shadow-emerald-600/10">
+                <span class="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-emerald-600 px-4 py-1 text-xs font-bold uppercase tracking-wide text-white">
+                    Recommended
+                </span>
+                <h2 class="text-xl font-bold text-emerald-800">Gold VIP Tier</h2>
+                <p class="mt-1 text-sm text-emerald-700/70">The full experience, with VIP perks.</p>
+                <p class="mt-6 text-4xl font-extrabold text-emerald-800">
+                    $25.00 <span class="text-base font-medium text-emerald-600">/ month</span>
+                </p>
+                <ul class="mt-6 flex-1 space-y-3 text-sm text-emerald-800">
+                    <li>✔ Everything in Silver</li>
+                    <li>✔ Exclusive VIP content &amp; events</li>
+                    <li>✔ Early access to new releases</li>
+                    <li>✔ Priority support</li>
+                </ul>
+                <button type="submit" name="tier" value="gold"
+                    class="mt-8 w-full rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white transition hover:bg-emerald-700">
+                    Choose Gold VIP
+                </button>
+            </div>
+        </div>
+    </form>
 
     <p class="mt-10 text-center text-xs text-emerald-600">
         🔒 Payments are processed securely by Stripe. Your card details never touch our servers.
